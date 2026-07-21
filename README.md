@@ -1,0 +1,1 @@
+# Splashdle-discord-activity
