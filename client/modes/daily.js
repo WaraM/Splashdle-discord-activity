@@ -100,11 +100,14 @@ export function renderDaily(onBack) {
   }
 
   async function ensureDiscordIdentity() {
-    if (identityInitialized) return;
+    if (identityInitialized) return false;
     if (identityPromise) {
       await identityPromise;
-      return;
+      return false;
     }
+
+    const previousPlayerId = playerId;
+    const previousPlayerName = playerName;
 
     identityPromise = (async () => {
       try {
@@ -124,6 +127,7 @@ export function renderDaily(onBack) {
 
     await identityPromise;
     identityPromise = null;
+    return previousPlayerId !== playerId || previousPlayerName !== playerName;
   }
 
   function renderLoading() {
@@ -327,7 +331,7 @@ export function renderDaily(onBack) {
         <header class="hero">
           <div style="display:flex;align-items:center;gap:8px;justify-content:space-between;">
             <button class="ghost" id="back-daily">&larr; Retour</button>
-            <button class="ghost" id="back-home">Accueil</button>
+            <div class="chip">Leaderboard</div>
           </div>
           <h1>Classement du serveur</h1>
           <p class="lede">Resultats de tous les joueurs sur le mode quotidien.</p>
@@ -342,9 +346,6 @@ export function renderDaily(onBack) {
 
     const backBtn = document.getElementById("back-daily");
     if (backBtn) backBtn.onclick = () => loadSummaryScreen();
-
-    const homeBtn = document.getElementById("back-home");
-    if (homeBtn) homeBtn.onclick = () => onBack?.();
 
     document.querySelectorAll(".leaderboard-tab").forEach((button) => {
       button.onclick = () => renderLeaderboard(button.getAttribute("data-scope") || "global");
@@ -665,8 +666,12 @@ export function renderDaily(onBack) {
 
   async function init() {
     renderLoading();
-    await ensureDiscordIdentity();
-    await loadSummaryScreen();
+    loadSummaryScreen();
+    ensureDiscordIdentity().then((identityChanged) => {
+      if (identityChanged) {
+        loadSummaryScreen();
+      }
+    });
   }
 
   init();
