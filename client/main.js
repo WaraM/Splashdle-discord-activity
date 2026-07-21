@@ -42,7 +42,6 @@ function renderHome() {
 
       <div class="footer">
         <button class="ghost" id="debug-btn">Debug API</button>
-        <span style="margin-left:8px;">Patch LoL 15.24.1</span>
       </div>
     </div>
   `;
