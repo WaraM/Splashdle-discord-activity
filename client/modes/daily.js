@@ -12,6 +12,11 @@ import {
 const FALLBACK = { championKey: "Aatrox", skinNum: 1, name: "Aatrox" };
 const ROOM_POLL_MS = 2500;
 const MAX_ZOOM_STEP = 4;
+const LEADERBOARD_TABS = [
+  { key: "global", label: "Global" },
+  { key: "yesterday", label: "Hier" },
+  { key: "today", label: "Aujourd'hui" },
+];
 
 const splashUrl = (puzzle) =>
   `/api/splash?champ=${encodeURIComponent(puzzle.championKey)}&skin=${encodeURIComponent(puzzle.skinNum)}`;
@@ -62,6 +67,7 @@ export function renderDaily(onBack) {
   let participantAvatarUrl = "";
   let identityInitialized = false;
   let identityPromise = null;
+  let activeLeaderboardScope = "global";
 
   async function initDiscord() {
     const clientId = import.meta.env.VITE_DISCORD_CLIENT_ID;
@@ -144,8 +150,8 @@ export function renderDaily(onBack) {
     return res.json();
   }
 
-  async function fetchLeaderboard() {
-    const res = await fetch(`/api/daily/leaderboard?guildId=${encodeURIComponent(guildId)}`);
+  async function fetchLeaderboard(scope = "global") {
+    const res = await fetch(`/api/daily/leaderboard?guildId=${encodeURIComponent(guildId)}&scope=${encodeURIComponent(scope)}`);
     if (!res.ok) throw new Error("daily leaderboard fetch failed");
     return res.json();
   }
@@ -254,11 +260,68 @@ export function renderDaily(onBack) {
 
     const leaderboardBtn = document.getElementById("daily-leaderboard");
     if (leaderboardBtn) {
-      leaderboardBtn.onclick = () => renderLeaderboard();
+      leaderboardBtn.onclick = () => renderLeaderboard(activeLeaderboardScope);
     }
   }
 
-  async function renderLeaderboard() {
+  function renderLeaderboardRows(data) {
+    const entries = data.entries ?? [];
+    if (!entries.length) {
+      return '<p class="muted center">Aucune donnee disponible pour le moment.</p>';
+    }
+
+    if (data.scope === "global") {
+      return `
+        <div class="leaderboard-head leaderboard-row">
+          <span>#</span>
+          <span>Joueur</span>
+          <span>Streak</span>
+          <span>Essais</span>
+          <span>Temps</span>
+        </div>
+        ${entries
+          .map(
+            (entry, index) => `
+              <div class="leaderboard-row">
+                <span>${index + 1}</span>
+                <span>${entry.playerName}</span>
+                <span>${entry.currentStreak}</span>
+                <span>${formatAverage(entry.averageAttempts)}</span>
+                <span>${formatDuration(entry.averageDurationMs)}</span>
+              </div>
+            `
+          )
+          .join("")}
+      `;
+    }
+
+    return `
+      <div class="leaderboard-head leaderboard-row leaderboard-row-day">
+        <span>#</span>
+        <span>Joueur</span>
+        <span>Statut</span>
+        <span>Essais</span>
+        <span>Temps</span>
+      </div>
+      ${entries
+        .map(
+          (entry, index) => `
+            <div class="leaderboard-row leaderboard-row-day">
+              <span>${index + 1}</span>
+              <span>${entry.playerName}</span>
+              <span>${entry.solved ? "Trouve" : entry.attempts > 0 ? "En cours" : "Pas joue"}</span>
+              <span>${entry.attempts ?? 0}</span>
+              <span>${formatDuration(entry.durationMs)}</span>
+            </div>
+          `
+        )
+        .join("")}
+    `;
+  }
+
+  async function renderLeaderboard(scope = "global") {
+    activeLeaderboardScope = scope;
+
     app.innerHTML = `
       <div class="screen daily-screen">
         <header class="hero">
@@ -267,8 +330,12 @@ export function renderDaily(onBack) {
             <button class="ghost" id="back-home">Accueil</button>
           </div>
           <h1>Classement du serveur</h1>
-          <p class="lede">Streak, efficacite et regularite sur le mode quotidien.</p>
+          <p class="lede">Resultats de tous les joueurs sur le mode quotidien.</p>
         </header>
+        <div class="leaderboard-tabs" id="leaderboard-tabs">
+          ${LEADERBOARD_TABS.map((tab) => `<button class="leaderboard-tab ${tab.key === scope ? "active" : ""}" data-scope="${tab.key}">${tab.label}</button>`).join("")}
+        </div>
+        <div class="leaderboard-meta" id="leaderboard-meta">Chargement...</div>
         <div class="leaderboard-card" id="leaderboard-body">Chargement...</div>
       </div>
     `;
@@ -279,38 +346,24 @@ export function renderDaily(onBack) {
     const homeBtn = document.getElementById("back-home");
     if (homeBtn) homeBtn.onclick = () => onBack?.();
 
-    try {
-      const data = await fetchLeaderboard();
-      const entries = data.entries ?? [];
-      const body = document.getElementById("leaderboard-body");
-      if (!body) return;
+    document.querySelectorAll(".leaderboard-tab").forEach((button) => {
+      button.onclick = () => renderLeaderboard(button.getAttribute("data-scope") || "global");
+    });
 
-      body.innerHTML = entries.length
-        ? `
-          <div class="leaderboard-head leaderboard-row">
-            <span>#</span>
-            <span>Joueur</span>
-            <span>Streak</span>
-            <span>Essais</span>
-            <span>Temps</span>
-          </div>
-          ${entries
-          .map(
-            (entry, index) => `
-                <div class="leaderboard-row">
-                  <span>${index + 1}</span>
-                  <span>${entry.playerName}</span>
-                  <span>${entry.currentStreak}</span>
-                  <span>${formatAverage(entry.averageAttempts)}</span>
-                  <span>${formatDuration(entry.averageDurationMs)}</span>
-                </div>
-              `
-          )
-          .join("")}
-        `
-        : '<p class="muted center">Aucune donnee disponible pour le moment.</p>';
-    } catch (err) {
+    try {
+      const data = await fetchLeaderboard(scope);
+      const meta = document.getElementById("leaderboard-meta");
       const body = document.getElementById("leaderboard-body");
+      if (!meta || !body) return;
+
+      meta.textContent = data.scope === "global"
+        ? "Classement cumule du serveur"
+        : `Jour concerne: ${data.dayKey}`;
+      body.innerHTML = renderLeaderboardRows(data);
+    } catch (err) {
+      const meta = document.getElementById("leaderboard-meta");
+      const body = document.getElementById("leaderboard-body");
+      if (meta) meta.textContent = "Chargement impossible";
       if (body) body.innerHTML = `<p class="feedback">Impossible de charger le leaderboard. ${String(err)}</p>`;
     }
   }
@@ -348,10 +401,10 @@ export function renderDaily(onBack) {
     const setParticipants = (participants) => {
       const normalized = Array.isArray(participants)
         ? participants.filter((participant) => participant?.id).map((participant) => ({
-          id: participant.id,
-          name: participant.name || "Joueur",
-          avatarUrl: participant.avatarUrl || DEFAULT_AVATAR_URL,
-        }))
+            id: participant.id,
+            name: participant.name || "Joueur",
+            avatarUrl: participant.avatarUrl || DEFAULT_AVATAR_URL,
+          }))
         : [];
       setState((prev) => ({ ...prev, participants: normalized }));
     };
@@ -432,15 +485,15 @@ export function renderDaily(onBack) {
     function draw() {
       const participantsHtml = state.participants.length
         ? state.participants
-          .map(
-            (participant) => `
+            .map(
+              (participant) => `
                 <div class="connected-item">
                   <img class="connected-avatar" src="${participant.avatarUrl}" alt="" onerror="this.onerror=null;this.src='${DEFAULT_AVATAR_URL}';" />
                   <span class="connected-name">${participant.name}</span>
                 </div>
               `
-          )
-          .join("")
+            )
+            .join("")
         : '<div class="connected-empty">Aucun joueur connecte.</div>';
 
       const solvedPanel = state.solved
@@ -481,18 +534,18 @@ export function renderDaily(onBack) {
             ${state.error ? `<p class="feedback">${state.error}</p>` : ""}
             <div class="guess-list">
               ${state.guesses.length === 0
-          ? '<p class="muted center">Aucune tentative pour l\'instant.</p>'
-          : [...state.guesses]
-            .reverse()
-            .map(
-              (g) => `
+                ? '<p class="muted center">Aucune tentative pour l\'instant.</p>'
+                : [...state.guesses]
+                    .reverse()
+                    .map(
+                      (g) => `
                         <div class="guess-item ${g.correct ? "good" : "bad"}">
                           <span class="guess-text">${g.value}</span>
                           <span class="guess-meta">${g.player ?? ""}</span>
                         </div>
                       `
-            )
-            .join("")}
+                    )
+                    .join("")}
             </div>
             ${solvedPanel}
           </div>
@@ -519,7 +572,7 @@ export function renderDaily(onBack) {
       if (leaderboardBtn) leaderboardBtn.onclick = () => {
         isActive = false;
         if (pollTimer) clearInterval(pollTimer);
-        renderLeaderboard();
+        renderLeaderboard(activeLeaderboardScope);
       };
 
       const input = document.getElementById("guess-input");

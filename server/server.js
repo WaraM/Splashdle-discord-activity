@@ -566,17 +566,53 @@ async function updateDailyStatsOnSolve(guildId, playerId, playerName, progress) 
   return updated;
 }
 
-async function getDailyLeaderboard(guildId) {
-  const entries = await listStoredByPrefix(dailyStats, `daily:stats:${guildId}:`);
-  return entries
-    .filter(Boolean)
-    .map((entry) => toDisplayStats(entry))
-    .sort((left, right) => {
-      if (right.currentStreak !== left.currentStreak) return right.currentStreak - left.currentStreak;
-      if (left.averageAttempts !== right.averageAttempts) return left.averageAttempts - right.averageAttempts;
-      if (left.averageDurationMs !== right.averageDurationMs) return left.averageDurationMs - right.averageDurationMs;
-      return String(left.playerName).localeCompare(String(right.playerName));
-    });
+function toDailyProgressEntry(progress) {
+  return {
+    playerId: progress?.playerId ?? null,
+    playerName: progress?.playerName ?? "Joueur",
+    solved: Boolean(progress?.solved),
+    attempts: Array.isArray(progress?.guesses) ? progress.guesses.length : 0,
+    durationMs: Number(progress?.durationMs ?? 0),
+    updatedAt: Number(progress?.updatedAt ?? 0),
+  };
+}
+
+async function getDailyLeaderboard(guildId, scope = "global") {
+  if (scope === "global") {
+    const entries = await listStoredByPrefix(dailyStats, `daily:stats:${guildId}:`);
+    return {
+      scope,
+      dayKey: dayKeyFor(),
+      entries: entries
+        .filter(Boolean)
+        .map((entry) => toDisplayStats(entry))
+        .sort((left, right) => {
+          if (right.currentStreak !== left.currentStreak) return right.currentStreak - left.currentStreak;
+          if (left.averageAttempts !== right.averageAttempts) return left.averageAttempts - right.averageAttempts;
+          if (left.averageDurationMs !== right.averageDurationMs) return left.averageDurationMs - right.averageDurationMs;
+          return String(left.playerName).localeCompare(String(right.playerName));
+        }),
+    };
+  }
+
+  const targetDayKey = scope === "yesterday" ? addDays(dayKeyFor(), -1) : dayKeyFor();
+  const entries = await listStoredByPrefix(dailyProgress, `daily:progress:${guildId}:${targetDayKey}:`);
+  return {
+    scope,
+    dayKey: targetDayKey,
+    entries: entries
+      .filter(Boolean)
+      .map((entry) => toDailyProgressEntry(entry))
+      .sort((left, right) => {
+        if (Number(right.solved) !== Number(left.solved)) return Number(right.solved) - Number(left.solved);
+        if ((left.durationMs || Number.MAX_SAFE_INTEGER) !== (right.durationMs || Number.MAX_SAFE_INTEGER)) {
+          return (left.durationMs || Number.MAX_SAFE_INTEGER) - (right.durationMs || Number.MAX_SAFE_INTEGER);
+        }
+        if (left.attempts !== right.attempts) return left.attempts - right.attempts;
+        if (left.updatedAt !== right.updatedAt) return left.updatedAt - right.updatedAt;
+        return String(left.playerName).localeCompare(String(right.playerName));
+      }),
+  };
 }
 
 app.post("/api/token", async (req, res) => {
@@ -723,8 +759,10 @@ app.get("/api/daily/summary", async (req, res) => {
 app.get("/api/daily/leaderboard", async (req, res) => {
   try {
     const guildId = guildScope(req.query.guildId);
-    const entries = await getDailyLeaderboard(guildId);
-    res.json({ guildId, dayKey: dayKeyFor(), entries });
+    const requestedScope = typeof req.query.scope === "string" ? req.query.scope : "global";
+    const scope = ["global", "today", "yesterday"].includes(requestedScope) ? requestedScope : "global";
+    const leaderboard = await getDailyLeaderboard(guildId, scope);
+    res.json({ guildId, ...leaderboard });
   } catch (err) {
     console.error("Daily leaderboard error", err);
     res.status(500).send("Failed to load daily leaderboard");
@@ -936,4 +974,6 @@ if (!isVercel) {
 }
 
 export default app;
+
+
 
