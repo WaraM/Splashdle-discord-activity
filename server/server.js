@@ -15,6 +15,10 @@ const MAX_ZOOM_STEP = 4;
 const PUZZLE_BUFFER_SIZE = 10;
 const ROOM_TTL_SECONDS = 60 * 60 * 12;
 const PRESENCE_TTL_MS = 15000;
+const DAILY_PROGRESS_TTL_SECONDS = 60 * 60 * 24 * 45;
+const DAILY_PUZZLE_TTL_SECONDS = 60 * 60 * 24 * 45;
+const DAILY_STATS_TTL_SECONDS = 60 * 60 * 24 * 365;
+const DAILY_TIMEZONE = "Europe/Paris";
 
 const CHAMPIONS_TTL_MS = 1000 * 60 * 60 * 6;
 let championsCache = {
@@ -26,6 +30,9 @@ const SKINS_TTL_MS = 1000 * 60 * 60 * 6;
 const skinsCache = new Map();
 const championDetailsCache = new Map();
 const rooms = new Map();
+const dailyPuzzles = new Map();
+const dailyProgress = new Map();
+const dailyStats = new Map();
 
 const redis = process.env.KV_REST_API_URL && process.env.KV_REST_API_TOKEN
   ? new Redis({
@@ -36,6 +43,101 @@ const redis = process.env.KV_REST_API_URL && process.env.KV_REST_API_TOKEN
 
 function roomKey(roomId) {
   return `room:${roomId}`;
+}
+
+function dailyPuzzleKey(guildId, dayKey) {
+  return `daily:puzzle:${guildId}:${dayKey}`;
+}
+
+function dailyProgressKey(guildId, dayKey, playerId) {
+  return `daily:progress:${guildId}:${dayKey}:${playerId}`;
+}
+
+function dailyStatsKey(guildId, playerId) {
+  return `daily:stats:${guildId}:${playerId}`;
+}
+
+function guildScope(value) {
+  return typeof value === "string" && value.trim() ? value.trim() : "global";
+}
+
+function playerScope(value) {
+  return typeof value === "string" && value.trim() ? value.trim() : "local-player";
+}
+
+function playerNameScope(value) {
+  return typeof value === "string" && value.trim() ? value.trim() : "Joueur";
+}
+
+function dayKeyFor(date = new Date(), timeZone = DAILY_TIMEZONE) {
+  const parts = new Intl.DateTimeFormat("en-US", {
+    timeZone,
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+  }).formatToParts(date);
+  const map = Object.fromEntries(parts.filter((part) => part.type !== "literal").map((part) => [part.type, part.value]));
+  return `${map.year}-${map.month}-${map.day}`;
+}
+
+function addDays(dayKey, delta) {
+  const [year, month, day] = String(dayKey).split("-").map(Number);
+  const date = new Date(Date.UTC(year, month - 1, day));
+  date.setUTCDate(date.getUTCDate() + delta);
+  const y = date.getUTCFullYear();
+  const m = String(date.getUTCMonth() + 1).padStart(2, "0");
+  const d = String(date.getUTCDate()).padStart(2, "0");
+  return `${y}-${m}-${d}`;
+}
+
+function average(total, count) {
+  return count > 0 ? total / count : 0;
+}
+
+function toDisplayStats(stats) {
+  const totalSolved = Number(stats?.totalSolved ?? 0);
+  const totalAttempts = Number(stats?.totalAttempts ?? 0);
+  const totalDurationMs = Number(stats?.totalDurationMs ?? 0);
+  return {
+    playerId: stats?.playerId ?? null,
+    playerName: stats?.playerName ?? "Joueur",
+    currentStreak: Number(stats?.currentStreak ?? 0),
+    totalSolved,
+    averageAttempts: average(totalAttempts, totalSolved),
+    averageDurationMs: average(totalDurationMs, totalSolved),
+    bestTimeMs: Number(stats?.bestTimeMs ?? 0),
+    lastSolvedDayKey: stats?.lastSolvedDayKey ?? null,
+  };
+}
+
+async function loadStored(store, key) {
+  if (!redis) {
+    return store.get(key) ?? null;
+  }
+  const raw = await redis.get(key);
+  if (!raw) return null;
+  if (typeof raw === "string") {
+    return JSON.parse(raw);
+  }
+  return raw;
+}
+
+async function saveStored(store, key, value, ttlSeconds) {
+  if (!redis) {
+    store.set(key, value);
+    return value;
+  }
+  await redis.set(key, JSON.stringify(value), { ex: ttlSeconds });
+  return value;
+}
+
+async function listStoredByPrefix(store, prefix) {
+  if (!redis) {
+    return [...store.entries()].filter(([key]) => key.startsWith(prefix)).map(([, value]) => value);
+  }
+  const keys = await redis.keys(`${prefix}*`);
+  if (!Array.isArray(keys) || keys.length === 0) return [];
+  return Promise.all(keys.map((key) => loadStored(store, key)));
 }
 
 function filterSplashableSkins(skins, championName) {
@@ -92,30 +194,14 @@ function listParticipants(room) {
 }
 
 async function loadRoom(roomId) {
-  if (!redis) {
-    return rooms.get(roomId) ?? null;
-  }
-
-  const raw = await redis.get(roomKey(roomId));
-  if (!raw) return null;
-
-  if (typeof raw === "string") {
-    return normalizeRoom(JSON.parse(raw));
-  }
-
-  return normalizeRoom(raw);
+  const raw = await loadStored(rooms, roomKey(roomId));
+  return raw ? normalizeRoom(raw) : null;
 }
 
 async function saveRoom(room) {
   const normalized = normalizeRoom(room);
   if (!normalized) return null;
-
-  if (!redis) {
-    rooms.set(normalized.roomId, normalized);
-    return normalized;
-  }
-
-  await redis.set(roomKey(normalized.roomId), JSON.stringify(normalized), { ex: ROOM_TTL_SECONDS });
+  await saveStored(rooms, roomKey(normalized.roomId), normalized, ROOM_TTL_SECONDS);
   return normalized;
 }
 
@@ -332,6 +418,167 @@ function pruneParticipants(room, ttlMs = PRESENCE_TTL_MS) {
   }
 }
 
+async function getOrCreateDailyPuzzle(guildId, dayKey = dayKeyFor()) {
+  const key = dailyPuzzleKey(guildId, dayKey);
+  const existing = await loadStored(dailyPuzzles, key);
+  if (existing) {
+    return normalizePuzzle(existing);
+  }
+
+  await loadChampions();
+  const puzzle = await normalizePuzzle(await pickRandomPuzzle());
+  if (!puzzle) return null;
+  const stored = { ...puzzle, guildId, dayKey, createdAt: Date.now() };
+  await saveStored(dailyPuzzles, key, stored, DAILY_PUZZLE_TTL_SECONDS);
+  return stored;
+}
+
+async function getDailyProgress(guildId, dayKey, playerId) {
+  return loadStored(dailyProgress, dailyProgressKey(guildId, dayKey, playerId));
+}
+
+async function saveDailyProgress(progress) {
+  await saveStored(
+    dailyProgress,
+    dailyProgressKey(progress.guildId, progress.dayKey, progress.playerId),
+    progress,
+    DAILY_PROGRESS_TTL_SECONDS
+  );
+  return progress;
+}
+
+async function getDailyStats(guildId, playerId) {
+  return loadStored(dailyStats, dailyStatsKey(guildId, playerId));
+}
+
+async function saveDailyStats(stats) {
+  await saveStored(dailyStats, dailyStatsKey(stats.guildId, stats.playerId), stats, DAILY_STATS_TTL_SECONDS);
+  return stats;
+}
+
+async function getOrCreateDailyProgress(guildId, playerId, playerName, dayKey = dayKeyFor()) {
+  const existing = await getDailyProgress(guildId, dayKey, playerId);
+  if (existing) {
+    existing.playerName = playerNameScope(playerName);
+    return existing;
+  }
+
+  const puzzle = await getOrCreateDailyPuzzle(guildId, dayKey);
+  if (!puzzle) return null;
+
+  const progress = {
+    guildId,
+    dayKey,
+    playerId,
+    playerName: playerNameScope(playerName),
+    puzzle,
+    guesses: [],
+    solved: false,
+    zoomStep: 0,
+    startedAt: Date.now(),
+    updatedAt: Date.now(),
+  };
+
+  await saveDailyProgress(progress);
+  return progress;
+}
+
+function getDailyStatusLabel(progress) {
+  if (!progress) return "Pas encore joué";
+  if (progress.solved) {
+    return `Réussi en ${progress.guesses?.length ?? 0} essai${(progress.guesses?.length ?? 0) > 1 ? "s" : ""}`;
+  }
+  if ((progress.guesses?.length ?? 0) > 0) {
+    return `En cours • ${progress.guesses.length} essai${progress.guesses.length > 1 ? "s" : ""}`;
+  }
+  return "Pas encore joué";
+}
+
+function buildDailySummary(progress, stats, dayKey) {
+  const hasCompletedToday = Boolean(progress?.solved);
+  const inProgress = Boolean(progress && !progress.solved);
+  return {
+    dayKey,
+    today: {
+      canPlay: !hasCompletedToday,
+      hasCompletedToday,
+      inProgress,
+      attempts: progress?.guesses?.length ?? 0,
+      durationMs: Number(progress?.durationMs ?? 0),
+      statusLabel: getDailyStatusLabel(progress),
+    },
+    stats: toDisplayStats(stats ?? {}),
+  };
+}
+
+function buildDailyGameView(progress) {
+  return {
+    guildId: progress.guildId,
+    dayKey: progress.dayKey,
+    puzzle: progress.puzzle,
+    guesses: progress.guesses ?? [],
+    solved: Boolean(progress.solved),
+    zoomStep: Number(progress.zoomStep ?? 0),
+    startedAt: Number(progress.startedAt ?? Date.now()),
+    updatedAt: Number(progress.updatedAt ?? Date.now()),
+    durationMs: Number(progress.durationMs ?? 0),
+    statusLabel: getDailyStatusLabel(progress),
+  };
+}
+
+async function updateDailyStatsOnSolve(guildId, playerId, playerName, progress) {
+  const existing = (await getDailyStats(guildId, playerId)) ?? {
+    guildId,
+    playerId,
+    playerName,
+    currentStreak: 0,
+    totalSolved: 0,
+    totalAttempts: 0,
+    totalDurationMs: 0,
+    bestTimeMs: 0,
+    lastSolvedDayKey: null,
+  };
+
+  if (existing.lastSolvedDayKey === progress.dayKey) {
+    existing.playerName = playerName;
+    await saveDailyStats(existing);
+    return existing;
+  }
+
+  const previousDayKey = addDays(progress.dayKey, -1);
+  const nextStreak = existing.lastSolvedDayKey === previousDayKey ? Number(existing.currentStreak ?? 0) + 1 : 1;
+  const durationMs = Number(progress.durationMs ?? 0);
+  const attempts = Array.isArray(progress.guesses) ? progress.guesses.length : 0;
+
+  const updated = {
+    ...existing,
+    playerName,
+    currentStreak: nextStreak,
+    totalSolved: Number(existing.totalSolved ?? 0) + 1,
+    totalAttempts: Number(existing.totalAttempts ?? 0) + attempts,
+    totalDurationMs: Number(existing.totalDurationMs ?? 0) + durationMs,
+    bestTimeMs:
+      Number(existing.bestTimeMs ?? 0) > 0 ? Math.min(Number(existing.bestTimeMs ?? 0), durationMs) : durationMs,
+    lastSolvedDayKey: progress.dayKey,
+  };
+
+  await saveDailyStats(updated);
+  return updated;
+}
+
+async function getDailyLeaderboard(guildId) {
+  const entries = await listStoredByPrefix(dailyStats, `daily:stats:${guildId}:`);
+  return entries
+    .filter(Boolean)
+    .map((entry) => toDisplayStats(entry))
+    .sort((left, right) => {
+      if (right.currentStreak !== left.currentStreak) return right.currentStreak - left.currentStreak;
+      if (left.averageAttempts !== right.averageAttempts) return left.averageAttempts - right.averageAttempts;
+      if (left.averageDurationMs !== right.averageDurationMs) return left.averageDurationMs - right.averageDurationMs;
+      return String(left.playerName).localeCompare(String(right.playerName));
+    });
+}
+
 app.post("/api/token", async (req, res) => {
   const response = await fetch("https://discord.com/api/oauth2/token", {
     method: "POST",
@@ -447,6 +694,102 @@ app.get("/api/puzzle", async (req, res) => {
   } catch (err) {
     console.error("Puzzle fetch error", err);
     res.status(500).send("Failed to load puzzle");
+  }
+});
+
+app.get("/api/daily/summary", async (req, res) => {
+  try {
+    const guildId = guildScope(req.query.guildId);
+    const playerId = playerScope(req.query.playerId);
+    const playerName = playerNameScope(req.query.playerName);
+    const dayKey = dayKeyFor();
+    const progress = await getDailyProgress(guildId, dayKey, playerId);
+    const stats = await getDailyStats(guildId, playerId);
+    if (progress && progress.playerName !== playerName) {
+      progress.playerName = playerName;
+      await saveDailyProgress(progress);
+    }
+    if (stats && stats.playerName !== playerName) {
+      stats.playerName = playerName;
+      await saveDailyStats(stats);
+    }
+    res.json(buildDailySummary(progress, stats, dayKey));
+  } catch (err) {
+    console.error("Daily summary error", err);
+    res.status(500).send("Failed to load daily summary");
+  }
+});
+
+app.get("/api/daily/leaderboard", async (req, res) => {
+  try {
+    const guildId = guildScope(req.query.guildId);
+    const entries = await getDailyLeaderboard(guildId);
+    res.json({ guildId, dayKey: dayKeyFor(), entries });
+  } catch (err) {
+    console.error("Daily leaderboard error", err);
+    res.status(500).send("Failed to load daily leaderboard");
+  }
+});
+
+app.get("/api/daily/game", async (req, res) => {
+  try {
+    const guildId = guildScope(req.query.guildId);
+    const playerId = playerScope(req.query.playerId);
+    const playerName = playerNameScope(req.query.playerName);
+    const progress = await getOrCreateDailyProgress(guildId, playerId, playerName, dayKeyFor());
+    if (!progress) {
+      res.status(500).send("No daily puzzle available");
+      return;
+    }
+    progress.playerName = playerName;
+    await saveDailyProgress(progress);
+    res.json(buildDailyGameView(progress));
+  } catch (err) {
+    console.error("Daily game error", err);
+    res.status(500).send("Failed to load daily game");
+  }
+});
+
+app.post("/api/daily/guess", async (req, res) => {
+  try {
+    const guildId = guildScope(req.body.guildId);
+    const playerId = playerScope(req.body.playerId);
+    const playerName = playerNameScope(req.body.playerName);
+    const value = typeof req.body.value === "string" ? req.body.value.trim() : "";
+
+    if (!value) {
+      res.status(400).send("value required");
+      return;
+    }
+
+    const progress = await getOrCreateDailyProgress(guildId, playerId, playerName, dayKeyFor());
+    if (!progress) {
+      res.status(500).send("No daily puzzle available");
+      return;
+    }
+
+    if (progress.solved) {
+      res.json(buildDailyGameView(progress));
+      return;
+    }
+
+    const correct = value.toLowerCase() === progress.puzzle.name.toLowerCase();
+    progress.playerName = playerName;
+    progress.guesses = [...(progress.guesses ?? []), { value, correct, player: playerName, at: Date.now() }].slice(-50);
+    if (correct) {
+      progress.solved = true;
+      progress.solvedAt = Date.now();
+      progress.durationMs = Math.max(0, progress.solvedAt - Number(progress.startedAt ?? progress.solvedAt));
+      await updateDailyStatsOnSolve(guildId, playerId, playerName, progress);
+    } else {
+      progress.zoomStep = Math.min(MAX_ZOOM_STEP, Number(progress.zoomStep ?? 0) + 1);
+    }
+    progress.updatedAt = Date.now();
+    await saveDailyProgress(progress);
+    res.json(buildDailyGameView(progress));
+  } catch (err) {
+    console.error("Daily guess error", err);
+    res.status(500).send("Failed to submit daily guess");
   }
 });
 
@@ -593,4 +936,3 @@ if (!isVercel) {
 }
 
 export default app;
-
