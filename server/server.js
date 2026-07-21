@@ -1,28 +1,42 @@
 import express from "express";
 import dotenv from "dotenv";
 import fetch from "node-fetch";
+import { Redis } from "@upstash/redis";
+
 dotenv.config({ path: "../.env" });
 
 const app = express();
 const port = 3001;
 const isVercel = process.env.VERCEL === "1";
 
-// Allow express to parse JSON bodies
 app.use(express.json());
 
 const MAX_ZOOM_STEP = 4;
 const PUZZLE_BUFFER_SIZE = 10;
+const ROOM_TTL_SECONDS = 60 * 60 * 12;
+const PRESENCE_TTL_MS = 15000;
 
-const CHAMPIONS_TTL_MS = 1000 * 60 * 60 * 6; // 6h
+const CHAMPIONS_TTL_MS = 1000 * 60 * 60 * 6;
 let championsCache = {
   at: 0,
   version: null,
   champions: null,
 };
-const SKINS_TTL_MS = 1000 * 60 * 60 * 6; // 6h
+const SKINS_TTL_MS = 1000 * 60 * 60 * 6;
 const skinsCache = new Map();
 const championDetailsCache = new Map();
 const rooms = new Map();
+
+const redis = process.env.KV_REST_API_URL && process.env.KV_REST_API_TOKEN
+  ? new Redis({
+      url: process.env.KV_REST_API_URL,
+      token: process.env.KV_REST_API_TOKEN,
+    })
+  : null;
+
+function roomKey(roomId) {
+  return `room:${roomId}`;
+}
 
 function filterSplashableSkins(skins, championName) {
   const base = Array.isArray(skins) ? skins : [];
@@ -56,6 +70,53 @@ function normalizeSkinEntry(skins, targetSkinNum, championName) {
     num: 0,
     name: championName,
   };
+}
+
+function normalizeRoom(room) {
+  if (!room) return null;
+  return {
+    roomId: room.roomId,
+    puzzle: room.puzzle ?? null,
+    nextPuzzles: Array.isArray(room.nextPuzzles) ? room.nextPuzzles : [],
+    guesses: Array.isArray(room.guesses) ? room.guesses : [],
+    solved: Boolean(room.solved),
+    round: Number(room.round ?? 1),
+    updatedAt: Number(room.updatedAt ?? Date.now()),
+    zoomStep: Number(room.zoomStep ?? 0),
+    participants: room.participants && typeof room.participants === "object" ? room.participants : {},
+  };
+}
+
+function listParticipants(room) {
+  return Object.values(room?.participants ?? {});
+}
+
+async function loadRoom(roomId) {
+  if (!redis) {
+    return rooms.get(roomId) ?? null;
+  }
+
+  const raw = await redis.get(roomKey(roomId));
+  if (!raw) return null;
+
+  if (typeof raw === "string") {
+    return normalizeRoom(JSON.parse(raw));
+  }
+
+  return normalizeRoom(raw);
+}
+
+async function saveRoom(room) {
+  const normalized = normalizeRoom(room);
+  if (!normalized) return null;
+
+  if (!redis) {
+    rooms.set(normalized.roomId, normalized);
+    return normalized;
+  }
+
+  await redis.set(roomKey(normalized.roomId), JSON.stringify(normalized), { ex: ROOM_TTL_SECONDS });
+  return normalized;
 }
 
 async function fetchJson(url) {
@@ -168,7 +229,11 @@ async function normalizePuzzle(puzzle) {
   await loadChampions();
   const data = await loadChampionDetails(puzzle.championKey, championsCache.version);
   const champ = data?.data?.[puzzle.championKey];
-  const normalizedSkin = normalizeSkinEntry(champ?.skins, puzzle.skinNum ?? 0, champ?.name ?? puzzle.name ?? puzzle.championKey);
+  const normalizedSkin = normalizeSkinEntry(
+    champ?.skins,
+    puzzle.skinNum ?? 0,
+    champ?.name ?? puzzle.name ?? puzzle.championKey
+  );
 
   return {
     ...puzzle,
@@ -221,7 +286,7 @@ async function fillPuzzleBuffer(room, targetSize = PUZZLE_BUFFER_SIZE) {
 }
 
 function roomView(room) {
-  const participants = Array.from(room.participants.values()).map(({ lastSeen, ...participant }) => participant);
+  const participants = listParticipants(room).map(({ lastSeen, ...participant }) => participant);
   return {
     ...room,
     participants,
@@ -230,10 +295,11 @@ function roomView(room) {
 }
 
 async function getOrCreateRoom(roomId) {
-  const existing = rooms.get(roomId);
+  const existing = await loadRoom(roomId);
   if (existing) {
     existing.puzzle = await normalizePuzzle(existing.puzzle);
     await fillPuzzleBuffer(existing);
+    await saveRoom(existing);
     return existing;
   }
 
@@ -250,26 +316,24 @@ async function getOrCreateRoom(roomId) {
     round: 1,
     updatedAt: Date.now(),
     zoomStep: 0,
-    participants: new Map(),
+    participants: {},
   };
   await fillPuzzleBuffer(room);
-  rooms.set(roomId, room);
+  await saveRoom(room);
   return room;
 }
 
-function pruneParticipants(room, ttlMs = 15000) {
+function pruneParticipants(room, ttlMs = PRESENCE_TTL_MS) {
   const now = Date.now();
-  for (const [id, participant] of room.participants.entries()) {
+  for (const [id, participant] of Object.entries(room.participants ?? {})) {
     if (!participant?.lastSeen || now - participant.lastSeen > ttlMs) {
-      room.participants.delete(id);
+      delete room.participants[id];
     }
   }
 }
 
 app.post("/api/token", async (req, res) => {
-
-  // Exchange the code for an access_token
-  const response = await fetch(`https://discord.com/api/oauth2/token`, {
+  const response = await fetch("https://discord.com/api/oauth2/token", {
     method: "POST",
     headers: {
       "Content-Type": "application/x-www-form-urlencoded",
@@ -305,11 +369,9 @@ app.post("/api/token", async (req, res) => {
     return;
   }
 
-  // Return the access_token to our client as { access_token: "..."}
   res.send({ access_token });
 });
 
-// Proxy splash art to avoid client-side CORS/allowlist blocks
 app.get("/api/splash", async (req, res) => {
   const champ = req.query.champ;
   const skin = req.query.skin ?? "0";
@@ -426,6 +488,7 @@ app.post("/api/room/guess", async (req, res) => {
       room.zoomStep = Math.min(MAX_ZOOM_STEP, (room.zoomStep ?? 0) + 1);
     }
     room.updatedAt = Date.now();
+    await saveRoom(room);
     res.json(roomView(room));
   } catch (err) {
     console.error("Room guess error", err);
@@ -455,6 +518,7 @@ app.post("/api/room/new-round", async (req, res) => {
     room.round = (room.round ?? 1) + 1;
     room.zoomStep = 0;
     room.updatedAt = Date.now();
+    await saveRoom(room);
     res.json(roomView(room));
   } catch (err) {
     console.error("Room new round error", err);
@@ -471,8 +535,9 @@ app.get("/api/room/presence", async (req, res) => {
       return;
     }
     pruneParticipants(room);
+    await saveRoom(room);
     res.json({
-      participants: Array.from(room.participants.values()).map(({ lastSeen, ...p }) => p),
+      participants: listParticipants(room).map(({ lastSeen, ...p }) => p),
     });
   } catch (err) {
     console.error("Room presence error", err);
@@ -496,15 +561,16 @@ app.post("/api/room/presence", async (req, res) => {
       return;
     }
 
-    room.participants.set(id, {
+    room.participants[id] = {
       id,
       name: typeof participant.name === "string" ? participant.name : "Joueur",
       avatarUrl: typeof participant.avatarUrl === "string" ? participant.avatarUrl : "",
       lastSeen: Date.now(),
-    });
+    };
     pruneParticipants(room);
+    await saveRoom(room);
     res.json({
-      participants: Array.from(room.participants.values()).map(({ lastSeen, ...p }) => p),
+      participants: listParticipants(room).map(({ lastSeen, ...p }) => p),
     });
   } catch (err) {
     console.error("Room presence update error", err);
