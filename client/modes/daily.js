@@ -6,7 +6,6 @@ import {
   getGuildId,
   getParticipantId,
   getPlayerName,
-  getRoomId,
   savePlayerName,
 } from "../lib/session";
 
@@ -61,6 +60,8 @@ export function renderDaily(onBack) {
   let playerName = getPlayerName();
   let playerId = getParticipantId();
   let participantAvatarUrl = "";
+  let identityInitialized = false;
+  let identityPromise = null;
 
   async function initDiscord() {
     const clientId = import.meta.env.VITE_DISCORD_CLIENT_ID;
@@ -93,17 +94,48 @@ export function renderDaily(onBack) {
   }
 
   async function ensureDiscordIdentity() {
-    try {
-      const discordResult = await initDiscord();
-      if (discordResult?.user) {
-        playerName = getDisplayName(discordResult.user);
-        playerId = discordResult.user.id || playerId;
-        participantAvatarUrl = getAvatarUrl(discordResult.user) || DEFAULT_AVATAR_URL;
-        savePlayerName(playerName);
-      }
-    } catch (err) {
-      console.error("Discord init error", err);
+    if (identityInitialized) return;
+    if (identityPromise) {
+      await identityPromise;
+      return;
     }
+
+    identityPromise = (async () => {
+      try {
+        const discordResult = await initDiscord();
+        if (discordResult?.user) {
+          playerName = getDisplayName(discordResult.user);
+          playerId = discordResult.user.id || playerId;
+          participantAvatarUrl = getAvatarUrl(discordResult.user) || DEFAULT_AVATAR_URL;
+          savePlayerName(playerName);
+        }
+      } catch (err) {
+        console.error("Discord init error", err);
+      } finally {
+        identityInitialized = true;
+      }
+    })();
+
+    await identityPromise;
+    identityPromise = null;
+  }
+
+  function renderLoading() {
+    app.innerHTML = `
+      <div class="screen daily-screen">
+        <header class="hero">
+          <div style="display:flex;align-items:center;gap:8px;justify-content:space-between;">
+            <button class="ghost" id="back-home">&larr;</button>
+            <div class="chip">Mode Quotidien</div>
+          </div>
+          <h1>Defi du jour</h1>
+          <p class="lede">Chargement de ton profil quotidien...</p>
+        </header>
+      </div>
+    `;
+
+    const backBtn = document.getElementById("back-home");
+    if (backBtn) backBtn.onclick = () => onBack?.();
   }
 
   async function fetchSummary() {
@@ -135,6 +167,30 @@ export function renderDaily(onBack) {
       throw new Error(`daily guess failed: ${res.status} ${body}`);
     }
     return res.json();
+  }
+
+  async function loadSummaryScreen() {
+    renderLoading();
+
+    try {
+      const summary = await fetchSummary();
+      renderSummary(summary);
+    } catch (err) {
+      app.innerHTML = `
+        <div class="screen daily-screen">
+          <header class="hero">
+            <div style="display:flex;align-items:center;gap:8px;justify-content:space-between;">
+              <button class="ghost" id="back-home">&larr; Retour</button>
+              <div class="chip">Mode Quotidien</div>
+            </div>
+            <h1>Defi du jour</h1>
+            <p class="feedback">Impossible de charger le mode quotidien. ${String(err)}</p>
+          </header>
+        </div>
+      `;
+      const backBtn = document.getElementById("back-home");
+      if (backBtn) backBtn.onclick = () => onBack?.();
+    }
   }
 
   function renderSummary(summary) {
@@ -208,7 +264,7 @@ export function renderDaily(onBack) {
         <header class="hero">
           <div style="display:flex;align-items:center;gap:8px;justify-content:space-between;">
             <button class="ghost" id="back-daily">&larr; Retour</button>
-            <div class="chip">Leaderboard</div>
+            <button class="ghost" id="back-home">Accueil</button>
           </div>
           <h1>Classement du serveur</h1>
           <p class="lede">Streak, efficacite et regularite sur le mode quotidien.</p>
@@ -218,7 +274,10 @@ export function renderDaily(onBack) {
     `;
 
     const backBtn = document.getElementById("back-daily");
-    if (backBtn) backBtn.onclick = () => init();
+    if (backBtn) backBtn.onclick = () => loadSummaryScreen();
+
+    const homeBtn = document.getElementById("back-home");
+    if (homeBtn) homeBtn.onclick = () => onBack?.();
 
     try {
       const data = await fetchLeaderboard();
@@ -236,8 +295,8 @@ export function renderDaily(onBack) {
             <span>Temps</span>
           </div>
           ${entries
-            .map(
-              (entry, index) => `
+          .map(
+            (entry, index) => `
                 <div class="leaderboard-row">
                   <span>${index + 1}</span>
                   <span>${entry.playerName}</span>
@@ -246,8 +305,8 @@ export function renderDaily(onBack) {
                   <span>${formatDuration(entry.averageDurationMs)}</span>
                 </div>
               `
-            )
-            .join("")}
+          )
+          .join("")}
         `
         : '<p class="muted center">Aucune donnee disponible pour le moment.</p>';
     } catch (err) {
@@ -257,7 +316,6 @@ export function renderDaily(onBack) {
   }
 
   async function renderGame() {
-    getRoomId();
     let championOptions = [];
     let isActive = true;
     let pollTimer;
@@ -290,10 +348,10 @@ export function renderDaily(onBack) {
     const setParticipants = (participants) => {
       const normalized = Array.isArray(participants)
         ? participants.filter((participant) => participant?.id).map((participant) => ({
-            id: participant.id,
-            name: participant.name || "Joueur",
-            avatarUrl: participant.avatarUrl || DEFAULT_AVATAR_URL,
-          }))
+          id: participant.id,
+          name: participant.name || "Joueur",
+          avatarUrl: participant.avatarUrl || DEFAULT_AVATAR_URL,
+        }))
         : [];
       setState((prev) => ({ ...prev, participants: normalized }));
     };
@@ -374,15 +432,15 @@ export function renderDaily(onBack) {
     function draw() {
       const participantsHtml = state.participants.length
         ? state.participants
-            .map(
-              (participant) => `
+          .map(
+            (participant) => `
                 <div class="connected-item">
                   <img class="connected-avatar" src="${participant.avatarUrl}" alt="" onerror="this.onerror=null;this.src='${DEFAULT_AVATAR_URL}';" />
                   <span class="connected-name">${participant.name}</span>
                 </div>
               `
-            )
-            .join("")
+          )
+          .join("")
         : '<div class="connected-empty">Aucun joueur connecte.</div>';
 
       const solvedPanel = state.solved
@@ -423,18 +481,18 @@ export function renderDaily(onBack) {
             ${state.error ? `<p class="feedback">${state.error}</p>` : ""}
             <div class="guess-list">
               ${state.guesses.length === 0
-                ? '<p class="muted center">Aucune tentative pour l\'instant.</p>'
-                : [...state.guesses]
-                    .reverse()
-                    .map(
-                      (g) => `
+          ? '<p class="muted center">Aucune tentative pour l\'instant.</p>'
+          : [...state.guesses]
+            .reverse()
+            .map(
+              (g) => `
                         <div class="guess-item ${g.correct ? "good" : "bad"}">
                           <span class="guess-text">${g.value}</span>
                           <span class="guess-meta">${g.player ?? ""}</span>
                         </div>
                       `
-                    )
-                    .join("")}
+            )
+            .join("")}
             </div>
             ${solvedPanel}
           </div>
@@ -446,7 +504,7 @@ export function renderDaily(onBack) {
         backBtn.onclick = () => {
           isActive = false;
           if (pollTimer) clearInterval(pollTimer);
-          init();
+          loadSummaryScreen();
         };
       }
 
@@ -454,7 +512,7 @@ export function renderDaily(onBack) {
       if (summaryBtn) summaryBtn.onclick = () => {
         isActive = false;
         if (pollTimer) clearInterval(pollTimer);
-        init();
+        loadSummaryScreen();
       };
 
       const leaderboardBtn = document.getElementById("daily-leaderboard-btn");
@@ -553,34 +611,9 @@ export function renderDaily(onBack) {
   }
 
   async function init() {
-    app.innerHTML = `
-      <div class="screen daily-screen">
-        <header class="hero">
-          <div class="chip">Mode Quotidien</div>
-          <h1>Defi du jour</h1>
-          <p class="lede">Chargement de ton profil quotidien...</p>
-        </header>
-      </div>
-    `;
-
+    renderLoading();
     await ensureDiscordIdentity();
-
-    try {
-      const summary = await fetchSummary();
-      renderSummary(summary);
-    } catch (err) {
-      app.innerHTML = `
-        <div class="screen daily-screen">
-          <header class="hero">
-            <button class="ghost" id="back-home">&larr; Retour</button>
-            <h1>Mode Quotidien</h1>
-            <p class="feedback">Impossible de charger le mode quotidien. ${String(err)}</p>
-          </header>
-        </div>
-      `;
-      const backBtn = document.getElementById("back-home");
-      if (backBtn) backBtn.onclick = () => onBack?.();
-    }
+    await loadSummaryScreen();
   }
 
   init();
