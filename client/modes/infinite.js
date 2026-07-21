@@ -630,7 +630,6 @@ export function renderInfinite(onBack) {
           </div>
 
           <div class="game-actions">
-            <button class="ghost" id="reset-round">Nouvelle image</button>
             <button class="mode-btn compact" id="replay-round" style="${state.solved ? "" : "display:none"}">Rejouer</button>
           </div>
         </div>
@@ -737,7 +736,6 @@ export function renderInfinite(onBack) {
     const input = document.getElementById("guess-input");
     const suggestions = document.getElementById("suggestions");
     const submitBtn = document.getElementById("submit-guess");
-    const resetBtn = document.getElementById("reset-round");
     const replayBtn = document.getElementById("replay-round");
 
     if (input && suggestions) {
@@ -808,7 +806,6 @@ export function renderInfinite(onBack) {
         handleSubmit(input?.value ?? "");
       };
     }
-    if (resetBtn) resetBtn.onclick = newRound;
     if (replayBtn) replayBtn.onclick = newRound;
   }
 
@@ -876,5 +873,7 @@ export function renderInfinite(onBack) {
 
   init();
 }
+
+
 
 
