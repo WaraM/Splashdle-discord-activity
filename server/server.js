@@ -5,6 +5,7 @@ dotenv.config({ path: "../.env" });
 
 const app = express();
 const port = 3001;
+const isVercel = process.env.VERCEL === "1";
 
 // Allow express to parse JSON bodies
 app.use(express.json());
@@ -511,6 +512,10 @@ app.post("/api/room/presence", async (req, res) => {
   }
 });
 
-app.listen(port, () => {
-  console.log(`Server listening at http://localhost:${port}`);
-});
+if (!isVercel) {
+  app.listen(port, () => {
+    console.log(`Server listening at http://localhost:${port}`);
+  });
+}
+
+export default app;
