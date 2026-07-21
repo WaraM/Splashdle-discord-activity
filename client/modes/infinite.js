@@ -203,7 +203,10 @@ export function renderInfinite(onBack) {
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ roomId, value, player: playerName }),
     });
-    if (!res.ok) throw new Error("guess submit failed");
+    if (!res.ok) {
+      const body = await res.text();
+      throw new Error(`guess submit failed: ${res.status} ${body}`);
+    }
     return res.json();
   }
 
@@ -213,7 +216,10 @@ export function renderInfinite(onBack) {
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ roomId }),
     });
-    if (!res.ok) throw new Error("new round failed");
+    if (!res.ok) {
+      const body = await res.text();
+      throw new Error(`new round failed: ${res.status} ${body}`);
+    }
     return res.json();
   }
 
@@ -291,7 +297,10 @@ export function renderInfinite(onBack) {
           },
         }),
       });
-      if (!res.ok) throw new Error("presence sync failed");
+      if (!res.ok) {
+        const body = await res.text();
+        throw new Error(`presence sync failed: ${res.status} ${body}`);
+      }
       const data = await res.json();
       setParticipants(data.participants ?? []);
     } catch (err) {
@@ -358,11 +367,16 @@ export function renderInfinite(onBack) {
     try {
       const room = await submitGuess(value);
       applyRoom(room);
-    } catch (err) {
-      console.error("Guess submit error", err);
       setState((prev) => ({
         ...prev,
-        error: "Impossible d'envoyer la tentative.",
+        error: null,
+      }));
+    } catch (err) {
+      console.error("Guess submit error", err);
+      writeDebug({ guessError: String(err), guessValue: value });
+      setState((prev) => ({
+        ...prev,
+        error: `Impossible d'envoyer la tentative. ${String(err)}`,
       }));
     }
   }
@@ -595,6 +609,8 @@ export function renderInfinite(onBack) {
             <button class="icon-btn" id="submit-guess" ${state.solved ? "disabled" : ""} aria-label="Valider">→</button>
           </div>
 
+          ${state.error ? `<p class="feedback">${state.error}</p>` : ""}
+
           <div class="guess-list" id="guess-list">
             ${state.guesses.length === 0
         ? '<p class="muted center">Aucune tentative pour l’instant.</p>'
@@ -818,6 +834,9 @@ export function renderInfinite(onBack) {
       }));
     }
 
+    syncLocalParticipantPreview();
+    await syncPresence();
+
     try {
       const discordResult = await initDiscord();
       if (discordResult?.user) {
@@ -826,14 +845,14 @@ export function renderInfinite(onBack) {
         participantId = discordResult.user.id || participantId;
         participantAvatarUrl = getAvatarUrl(discordResult.user) || DEFAULT_AVATAR_URL;
         window.localStorage.setItem("splashdle_player", name);
+        syncLocalParticipantPreview();
+        await syncPresence();
       }
     } catch (err) {
       discordError = String(err);
       console.error("Discord init error", err);
+      writeDebug({ discordError });
     }
-
-    syncLocalParticipantPreview();
-    await syncPresence();
     presenceTimer = setInterval(() => {
       if (!isActive) return;
       syncPresence();
