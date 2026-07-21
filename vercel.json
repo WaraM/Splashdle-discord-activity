@@ -4,7 +4,7 @@
   "buildCommand": "npm --prefix client run build",
   "outputDirectory": "client/dist",
   "functions": {
-    "api/index.js": {
+    "api/[...path].js": {
       "maxDuration": 10
     }
   }
