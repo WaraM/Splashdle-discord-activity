@@ -283,13 +283,14 @@ export function renderInfinite(onBack) {
   }
 
 
-  async function syncPresence() {
+  async function syncPresence(previousParticipantId = null) {
     try {
       const res = await fetch("/api/room/presence", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           roomId,
+          previousParticipantId,
           participant: {
             id: participantId,
             name: playerName,
@@ -838,6 +839,7 @@ export function renderInfinite(onBack) {
     await syncPresence();
 
     try {
+      const previousParticipantId = participantId;
       const discordResult = await initDiscord();
       if (discordResult?.user) {
         const name = getDisplayName(discordResult.user);
@@ -846,7 +848,7 @@ export function renderInfinite(onBack) {
         participantAvatarUrl = getAvatarUrl(discordResult.user) || DEFAULT_AVATAR_URL;
         window.localStorage.setItem("splashdle_player", name);
         syncLocalParticipantPreview();
-        await syncPresence();
+        await syncPresence(previousParticipantId);
       }
     } catch (err) {
       discordError = String(err);
@@ -874,3 +876,5 @@ export function renderInfinite(onBack) {
 
   init();
 }
+
+

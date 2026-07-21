@@ -549,6 +549,10 @@ app.post("/api/room/presence", async (req, res) => {
   try {
     const roomId = typeof req.body.roomId === "string" && req.body.roomId.trim() ? req.body.roomId : "local";
     const participant = req.body.participant ?? {};
+    const previousParticipantId =
+      typeof req.body.previousParticipantId === "string" && req.body.previousParticipantId.trim()
+        ? req.body.previousParticipantId.trim()
+        : null;
     const id = typeof participant.id === "string" && participant.id.trim() ? participant.id.trim() : null;
     if (!id) {
       res.status(400).send("participant id required");
@@ -559,6 +563,10 @@ app.post("/api/room/presence", async (req, res) => {
     if (!room) {
       res.status(500).send("No room available");
       return;
+    }
+
+    if (previousParticipantId && previousParticipantId !== id) {
+      delete room.participants[previousParticipantId];
     }
 
     room.participants[id] = {
@@ -585,3 +593,4 @@ if (!isVercel) {
 }
 
 export default app;
+
