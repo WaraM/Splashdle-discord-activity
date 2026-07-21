@@ -1,4 +1,4 @@
-import express from "express";
+ï»¿import express from "express";
 import dotenv from "dotenv";
 import fetch from "node-fetch";
 import { Redis } from "@upstash/redis";
@@ -484,14 +484,14 @@ async function getOrCreateDailyProgress(guildId, playerId, playerName, dayKey = 
 }
 
 function getDailyStatusLabel(progress) {
-  if (!progress) return "Pas encore joué";
+  if (!progress) return "Pas encore joue";
   if (progress.solved) {
-    return `Réussi en ${progress.guesses?.length ?? 0} essai${(progress.guesses?.length ?? 0) > 1 ? "s" : ""}`;
+    return `Reussi en ${progress.guesses?.length ?? 0} essai${(progress.guesses?.length ?? 0) > 1 ? "s" : ""}`;
   }
   if ((progress.guesses?.length ?? 0) > 0) {
-    return `En cours • ${progress.guesses.length} essai${progress.guesses.length > 1 ? "s" : ""}`;
+    return `En cours - ${progress.guesses.length} essai${progress.guesses.length > 1 ? "s" : ""}`;
   }
-  return "Pas encore joué";
+  return "Pas encore joue";
 }
 
 function buildDailySummary(progress, stats, dayKey) {
@@ -936,3 +936,4 @@ if (!isVercel) {
 }
 
 export default app;
+

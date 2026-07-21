@@ -1,4 +1,4 @@
-import { DiscordSDK } from "@discord/embedded-app-sdk";
+ï»¿import { DiscordSDK } from "@discord/embedded-app-sdk";
 import {
   DEFAULT_AVATAR_URL,
   getAvatarUrl,
@@ -140,23 +140,23 @@ export function renderDaily(onBack) {
   function renderSummary(summary) {
     const stats = summary?.stats ?? {};
     const today = summary?.today ?? {};
-    const buttonLabel = today.inProgress ? "Reprendre" : today.canPlay ? "Jouer" : "Déjà joué aujourd'hui";
+    const buttonLabel = today.inProgress ? "Reprendre" : today.canPlay ? "Jouer" : "Deja joue aujourd'hui";
 
     app.innerHTML = `
       <div class="screen daily-screen">
         <header class="hero">
           <div style="display:flex;align-items:center;gap:8px;justify-content:space-between;">
-            <button class="ghost" id="back-home">? Retour</button>
+            <button class="ghost" id="back-home">&larr; Retour</button>
             <div class="chip">Mode Quotidien</div>
           </div>
-          <h1>Défi du jour</h1>
-          <p class="lede">Un seul splash art par jour, les mêmes conditions pour tous les joueurs du serveur.</p>
+          <h1>Defi du jour</h1>
+          <p class="lede">Un seul splash art par jour, les memes conditions pour tous les joueurs du serveur.</p>
         </header>
 
         <section class="stats-grid">
           <article class="stats-card highlight">
             <div class="stats-label">Statut du jour</div>
-            <div class="stats-value">${today.statusLabel ?? "Pas encore joué"}</div>
+            <div class="stats-value">${today.statusLabel ?? "Pas encore joue"}</div>
             <div class="stats-sub">${summary.dayKey ?? ""}</div>
           </article>
           <article class="stats-card">
@@ -164,7 +164,7 @@ export function renderDaily(onBack) {
             <div class="stats-value">${stats.currentStreak ?? 0}</div>
           </article>
           <article class="stats-card">
-            <div class="stats-label">Quotidiens réussis</div>
+            <div class="stats-label">Quotidiens reussis</div>
             <div class="stats-value">${stats.totalSolved ?? 0}</div>
           </article>
           <article class="stats-card">
@@ -207,11 +207,11 @@ export function renderDaily(onBack) {
       <div class="screen daily-screen">
         <header class="hero">
           <div style="display:flex;align-items:center;gap:8px;justify-content:space-between;">
-            <button class="ghost" id="back-daily">? Retour</button>
+            <button class="ghost" id="back-daily">&larr; Retour</button>
             <div class="chip">Leaderboard</div>
           </div>
           <h1>Classement du serveur</h1>
-          <p class="lede">Streak, efficacité et régularité sur le mode quotidien.</p>
+          <p class="lede">Streak, efficacite et regularite sur le mode quotidien.</p>
         </header>
         <div class="leaderboard-card" id="leaderboard-body">Chargement...</div>
       </div>
@@ -249,7 +249,7 @@ export function renderDaily(onBack) {
             )
             .join("")}
         `
-        : '<p class="muted center">Aucune donnée disponible pour le moment.</p>';
+        : '<p class="muted center">Aucune donnee disponible pour le moment.</p>';
     } catch (err) {
       const body = document.getElementById("leaderboard-body");
       if (body) body.innerHTML = `<p class="feedback">Impossible de charger le leaderboard. ${String(err)}</p>`;
@@ -257,7 +257,7 @@ export function renderDaily(onBack) {
   }
 
   async function renderGame() {
-    const roomId = getRoomId();
+    getRoomId();
     let championOptions = [];
     let isActive = true;
     let pollTimer;
@@ -383,16 +383,16 @@ export function renderDaily(onBack) {
               `
             )
             .join("")
-        : '<div class="connected-empty">Aucun joueur connecté.</div>';
+        : '<div class="connected-empty">Aucun joueur connecte.</div>';
 
       const solvedPanel = state.solved
         ? `
           <div class="daily-finish-card">
-            <div class="stats-label">Terminé pour aujourd'hui</div>
-            <div class="stats-value">${state.puzzle?.name ?? "Champion trouvé"}</div>
-            <p class="muted center">Tu peux retourner au résumé ou consulter le leaderboard.</p>
+            <div class="stats-label">Termine pour aujourd'hui</div>
+            <div class="stats-value">${state.puzzle?.name ?? "Champion trouve"}</div>
+            <p class="muted center">Tu peux retourner au resume ou consulter le leaderboard.</p>
             <div class="game-actions">
-              <button class="ghost" id="daily-summary-btn">Retour au résumé</button>
+              <button class="ghost" id="daily-summary-btn">Retour au resume</button>
               <button class="mode-btn compact" id="daily-leaderboard-btn">Leaderboard</button>
             </div>
           </div>
@@ -401,13 +401,13 @@ export function renderDaily(onBack) {
 
       app.innerHTML = `
         <div class="connected-panel">
-          <div class="connected-title">Connectés</div>
+          <div class="connected-title">Connectes</div>
           ${participantsHtml}
         </div>
         <div class="game-shell">
           <div class="game-header">
-            <button class="icon-back ghost" id="back-daily-game" aria-label="Retour">?</button>
-            <div class="chip">Quotidien ${state.statusLabel ? `• ${state.statusLabel}` : ""}</div>
+            <button class="icon-back ghost" id="back-daily-game" aria-label="Retour">&larr;</button>
+            <div class="chip">Quotidien ${state.statusLabel ? `&bull; ${state.statusLabel}` : ""}</div>
           </div>
           <div class="game-body">
             <div class="splash-frame">
@@ -418,12 +418,12 @@ export function renderDaily(onBack) {
                 <input id="guess-input" type="text" placeholder="Nom du champion..." ${state.solved ? "disabled" : ""} />
                 <div class="suggestions" id="suggestions"></div>
               </div>
-              <button class="icon-btn" id="submit-guess" ${state.solved ? "disabled" : ""} aria-label="Valider">?</button>
+              <button class="icon-btn" id="submit-guess" ${state.solved ? "disabled" : ""} aria-label="Valider">&rarr;</button>
             </div>
             ${state.error ? `<p class="feedback">${state.error}</p>` : ""}
             <div class="guess-list">
               ${state.guesses.length === 0
-                ? '<p class="muted center">Aucune tentative pour l’instant.</p>'
+                ? '<p class="muted center">Aucune tentative pour l\'instant.</p>'
                 : [...state.guesses]
                     .reverse()
                     .map(
@@ -537,7 +537,7 @@ export function renderDaily(onBack) {
       const [game] = await Promise.all([fetchGame(), fetchChampions()]);
       applyGame(game);
     } catch (err) {
-      setState((prev) => ({ ...prev, loading: false, error: `Impossible de charger le défi du jour. ${String(err)}` }));
+      setState((prev) => ({ ...prev, loading: false, error: `Impossible de charger le defi du jour. ${String(err)}` }));
     }
 
     pollTimer = setInterval(async () => {
@@ -557,7 +557,7 @@ export function renderDaily(onBack) {
       <div class="screen daily-screen">
         <header class="hero">
           <div class="chip">Mode Quotidien</div>
-          <h1>Défi du jour</h1>
+          <h1>Defi du jour</h1>
           <p class="lede">Chargement de ton profil quotidien...</p>
         </header>
       </div>
@@ -572,7 +572,7 @@ export function renderDaily(onBack) {
       app.innerHTML = `
         <div class="screen daily-screen">
           <header class="hero">
-            <button class="ghost" id="back-home">? Retour</button>
+            <button class="ghost" id="back-home">&larr; Retour</button>
             <h1>Mode Quotidien</h1>
             <p class="feedback">Impossible de charger le mode quotidien. ${String(err)}</p>
           </header>

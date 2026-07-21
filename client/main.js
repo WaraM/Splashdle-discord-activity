@@ -1,4 +1,4 @@
-import "./style.css";
+ï»¿import "./style.css";
 import { renderDaily } from "./modes/daily";
 import { renderInfinite } from "./modes/infinite";
 
@@ -7,7 +7,7 @@ const app = document.querySelector("#app");
 const modes = [
   { key: "infinite", label: "Mode Infini", enabled: true },
   { key: "daily", label: "Mode Quotidien", enabled: true },
-  { key: "duel", label: "Mode Duel (Bientôt !)", enabled: false },
+  { key: "duel", label: "Mode Duel (Bientot !)", enabled: false },
 ];
 
 function navigate(screen) {
@@ -41,7 +41,7 @@ function renderHome() {
     <div class="screen">
       <header class="hero">
         <h1>Splashdle</h1>
-        <p class="lede">Devine le champion à partir de son splash art. Choisis un mode pour commencer.</p>
+        <p class="lede">Devine le champion a partir de son splash art. Choisis un mode pour commencer.</p>
       </header>
 
       <div class="mode-stack" id="mode-stack"></div>
@@ -85,10 +85,10 @@ function renderDebug(onBack) {
     <div class="screen">
       <header class="hero">
         <div style="display:flex;align-items:center;gap:8px;justify-content:space-between;">
-          <button class="ghost" id="back-home">? Retour</button>
+          <button class="ghost" id="back-home">&larr; Retour</button>
           <div class="chip">Debug API</div>
         </div>
-        <p class="lede">Test du proxy et des données champion/skins.</p>
+        <p class="lede">Test du proxy et des donnees champion/skins.</p>
       </header>
 
       <div class="mode-stack">
